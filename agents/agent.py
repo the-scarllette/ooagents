@@ -16,8 +16,8 @@ class Agent:
             return self.actions[0]
         return random.choice(self.actions)
 
-    def learn(self, state: np.ndarray, action: int|float, next_state: np.ndarray, reward: float,
-              next_state_possible_actions: List[int]|None=None) -> None:
+    def learn(self, state: np.ndarray, action: int|float, reward: float, next_state: np.ndarray,
+              terminal: bool=False, next_state_possible_actions: List[int]|None=None) -> None:
         return None
 
     @staticmethod
