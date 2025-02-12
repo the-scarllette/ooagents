@@ -22,7 +22,7 @@ def run_epoch(environment, agent: Agent,
                                prefix="     Running Epoch: ", suffix="Complete")
 
         if done:
-            state = environment.reset(seed=seed)
+            state, _ = environment.reset(seed=seed)
             seed += 1
             if not all_actions_valid:
                 possible_actions = environment.get_possible_actions()
@@ -73,7 +73,7 @@ def train_agent(environment, agent: Agent,
             epoch_returns.append(epoch_return)
 
         if done:
-            state = environment.reset()
+            state, _ = environment.reset()
             if not all_actions_valid:
                 possible_actions = environment.get_possible_actions()
 

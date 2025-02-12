@@ -1,6 +1,7 @@
 import flax
 import flax.linen as nn
 from flax.training.train_state import TrainState
+import gymnasium as gym
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -25,18 +26,21 @@ class QNetwork(nn.Module):
         x = nn.Dense(self.action_dim)(x)
         return x
 
+class TrainState(TrainState):
+    target_params: flax.core.FrozenDict
+
 class DQN(Agent):
 
-    def __init__(self, actions: int, state_shape: Tuple[int],
+    def __init__(self, environment: gym.Env,
                  network_shape: List[int], buffer_size: int,
                  learning_rate: float=2.5e-4, gamma: float=0.99, tau: float=1.0, batch_size: int=128,
                  start_epsilon: float=1, end_epsilon: float=0.01, epsilon_scheduler: float=0.9,
                  pre_learning_steps: int=1e3, learning_frequency: int=10, target_network_update_freq: int=500,
                  output_loss_freq: int=100):
-        self.actions: List[int] = range(actions)
-        self.action_dim: int = actions
+        self.action_dim: int = environment.action_space.n
+        self.actions: List[int] = list(range(self.action_dim))
 
-        self.state_shape: Tuple[int] = state_shape
+        self.state_shape: Tuple[int, ...] = environment.observation_space.shape
 
         self.gamma: float = gamma
 
@@ -58,18 +62,19 @@ class DQN(Agent):
         self.q_network: QNetwork = QNetwork(action_dim=self.action_dim,
                                             shape=network_shape)
         start_key = jax.random.PRNGKey(0)
+        obs, _ = environment.reset()
         self.q_state = TrainState.create(
             apply_fn=self.q_network.apply,
-            params=self.q_network.init(start_key),
-            target_params=self.q_network.init(start_key),
+            params=self.q_network.init(start_key, obs),
+            target_params=self.q_network.init(start_key, obs),
             tx=optax.adam(learning_rate)
         )
         self.q_network.apply = jax.jit(self.q_network.apply)
 
         self.replay_buffer = ReplayBuffer(
             buffer_size,
-            self.state_shape,
-            self.action_dim,
+            environment.observation_space,
+            environment.action_space,
             handle_timeout_termination=False
         )
 
