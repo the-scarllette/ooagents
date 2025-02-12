@@ -31,7 +31,8 @@ class DQN(Agent):
                  network_shape: List[int], buffer_size: int,
                  learning_rate: float=1e-4, gamma: float=0.9, tau: float=1e-3, batch_size: int=1e3,
                  start_epsilon: float=0.1, end_epsilon: float=0.01, epsilon_scheduler: float=0.9,
-                 pre_learning_steps: int=1e3, learning_frequency: int=10, target_network_update_freq: int=100):
+                 pre_learning_steps: int=1e3, learning_frequency: int=10, target_network_update_freq: int=100,
+                 output_loss_freq: int=0):
         self.actions: List[int] = actions
         self.action_dim: int = len(actions)
 
@@ -52,6 +53,7 @@ class DQN(Agent):
         self.learning_frequency: int = learning_frequency
         self.target_network_update_freq: int = target_network_update_freq
         self.training_steps: int = 0
+        self.output_loss_freq: int = output_loss_freq
 
         self.q_network: QNetwork = QNetwork(action_dim=self.action_dim,
                                             shape=network_shape)
@@ -121,12 +123,15 @@ class DQN(Agent):
         self.epsilon_schedule()
 
         transitions = self.replay_buffer.sample(self.batch_size)
-        self.train_network(transitions.observations.numpy(),
-                           transitions.actions.numpy(),
-                           transitions.rewards.flatten().numpy(),
-                           transitions.next_observations.numpy(),
-                           transitions.dones.flatten().numpy()
+        loss = self.train_network(transitions.observations.numpy(),
+                                transitions.actions.numpy(),
+                                transitions.rewards.flatten().numpy(),
+                                transitions.next_observations.numpy(),
+                                transitions.dones.flatten().numpy()
         )
+
+        if (self.output_loss_freq > 0) and (self.training_steps % self.output_loss_freq == 0):
+            print("MSE Loss: " + str(jax.device_get(loss)))
 
         if self.training_steps % self.target_network_update_freq == 0:
             self.q_state = self.q_state.replace(
@@ -143,7 +148,7 @@ class DQN(Agent):
 
     @jax.jit
     def train_network(self, states: np.ndarray, actions: np.ndarray, rewards: np.ndarray, next_states: np.ndarray,
-                      terminals: np.ndarray) -> None:
+                      terminals: np.ndarray) -> jnp.ndarray:
         next_state_values = self.q_network.apply(self.q_state.target_params, next_states) # (batch_size, num_actions)
         max_next_state_value = jnp.max(next_state_values, axis=-1) # (batch_size, )
         target_value = rewards + ((1.0 - terminals) * self.gamma * max_next_state_value) # (batch_size, )
@@ -154,6 +159,6 @@ class DQN(Agent):
             state_action_value = state_value[jnp.arrange(state_value.shape[0]), actions.squeeze()] # (batch_size, )
             return ((state_action_value - target_value)**2).mean(), state_action_value
 
-        (_, _), grads = jax.value_and_grad(mse_loss, has_aux=True)()
+        (loss, _), grads = jax.value_and_grad(mse_loss, has_aux=True)()
         self.q_state = self.q_state.apply_gradients(grads=grads)
-        return
+        return loss
