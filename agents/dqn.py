@@ -27,14 +27,14 @@ class QNetwork(nn.Module):
 
 class DQN(Agent):
 
-    def __init__(self, actions: List[int], state_shape: Tuple[int],
+    def __init__(self, actions: int, state_shape: Tuple[int],
                  network_shape: List[int], buffer_size: int,
                  learning_rate: float=2.5e-4, gamma: float=0.99, tau: float=1.0, batch_size: int=128,
                  start_epsilon: float=1, end_epsilon: float=0.01, epsilon_scheduler: float=0.9,
                  pre_learning_steps: int=1e3, learning_frequency: int=10, target_network_update_freq: int=500,
                  output_loss_freq: int=100):
-        self.actions: List[int] = actions
-        self.action_dim: int = len(actions)
+        self.actions: List[int] = range(actions)
+        self.action_dim: int = actions
 
         self.state_shape: Tuple[int] = state_shape
 

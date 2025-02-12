@@ -6,8 +6,11 @@ from typing import List, Tuple, Type
 
 class Agent:
 
-    def __init__(self, actions: List[int] | Tuple[int]):
-        self.actions = actions
+    def __init__(self, actions: int| List[int] | Tuple[int]):
+        if type(actions) == int:
+            self.actions = range(actions)
+        else:
+            self.actions = actions
         return
 
     def choose_action(self, state: np.ndarray, possible_actions: List[int]|None=None,
