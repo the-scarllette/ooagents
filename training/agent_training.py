@@ -28,7 +28,7 @@ def run_epoch(environment, agent: Agent,
                 possible_actions = environment.get_possible_actions()
 
         action = agent.choose_action(state, possible_actions, True)
-        next_state, reward, done, _ = environment.step(action)
+        next_state, reward, done, _, _ = environment.step(action)
         epoch_return += reward
 
         if all_actions_valid:
@@ -78,7 +78,7 @@ def train_agent(environment, agent: Agent,
                 possible_actions = environment.get_possible_actions()
 
         action = agent.choose_action(state, possible_actions)
-        next_state, reward, done, _ = environment.step(action)
+        next_state, reward, done, _, _ = environment.step(action)
 
         if all_actions_valid:
             agent.learn(state, action, reward, next_state, done)

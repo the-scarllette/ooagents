@@ -13,6 +13,7 @@ from typing import List, Tuple
 
 from agents.agent import Agent
 
+
 class QNetwork(nn.Module):
     action_dim: int
     shape: List[int]
@@ -34,7 +35,7 @@ class DQN(Agent):
     def __init__(self, environment: gym.Env,
                  network_shape: List[int], buffer_size: int,
                  learning_rate: float=2.5e-4, gamma: float=0.99, tau: float=1.0, batch_size: int=128,
-                 start_epsilon: float=1, end_epsilon: float=0.01, epsilon_scheduler: float=0.9,
+                 start_epsilon: float=1, end_epsilon: float=0.05, epsilon_scheduler: float=0.999,
                  pre_learning_steps: int=1e3, learning_frequency: int=10, target_network_update_freq: int=500,
                  output_loss_freq: int=100):
         self.action_dim: int = environment.action_space.n
@@ -75,6 +76,7 @@ class DQN(Agent):
             buffer_size,
             environment.observation_space,
             environment.action_space,
+            "cpu",
             handle_timeout_termination=False
         )
 
@@ -89,10 +91,9 @@ class DQN(Agent):
 
     def choose_action(self, state: np.ndarray, possible_actions: List[int]|None=None,
                       no_random: bool=False) -> int|float:
-        if possible_actions is None:
-            possible_actions = self.actions
-
         if (not no_random) and random.uniform(0, 1) < self.epsilon:
+            if possible_actions is None:
+                possible_actions = self.actions
             return random.choice(possible_actions)
 
         q_values = self.q_network.apply(self.q_state.params, state)
@@ -110,6 +111,24 @@ class DQN(Agent):
 
     def learn(self, state: np.ndarray, action: int|float, reward: float, next_state: np.ndarray,
               terminal: bool=False, next_state_possible_actions: List[int]|None=None) -> None:
+        @jax.jit
+        def train_network(states: np.ndarray, actions: np.ndarray, rewards: np.ndarray,
+                          next_states: np.ndarray,
+                          terminals: np.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+            next_state_values = self.q_network.apply(self.q_state.target_params,
+                                                     next_states)  # (batch_size, num_actions)
+            max_next_state_value = jnp.max(next_state_values, axis=-1)  # (batch_size, )
+            target_value = rewards + ((1.0 - terminals) * self.gamma * max_next_state_value)  # (batch_size, )
+
+            def mse_loss(params) -> Tuple[jnp.ndarray, jnp.ndarray]:
+                state_value = self.q_network.apply(params, states)  # (batch_ize, num_actions)
+                # Extracting state values for actions taken:
+                state_action_value = state_value[jnp.arange(state_value.shape[0]), actions.squeeze()]  # (batch_size, )
+                return ((state_action_value - target_value) ** 2).mean(), state_action_value
+
+            (loss, _), grads = jax.value_and_grad(mse_loss, has_aux=True)(self.q_state.params)
+            return loss, self.q_state.apply_gradients(grads=grads)
+
         done = 0
         if terminal:
             done = 1
@@ -128,11 +147,11 @@ class DQN(Agent):
         self.epsilon_schedule()
 
         transitions = self.replay_buffer.sample(self.batch_size)
-        loss = self.train_network(transitions.observations.numpy(),
-                                transitions.actions.numpy(),
-                                transitions.rewards.flatten().numpy(),
-                                transitions.next_observations.numpy(),
-                                transitions.dones.flatten().numpy()
+        loss, self.q_state = train_network(transitions.observations.numpy(),
+                             transitions.actions.numpy(),
+                             transitions.rewards.flatten().numpy(),
+                             transitions.next_observations.numpy(),
+                             transitions.dones.flatten().numpy()
         )
 
         if (self.output_loss_freq > 0) and (self.training_steps % self.output_loss_freq == 0):
@@ -150,20 +169,3 @@ class DQN(Agent):
 
     def save(self, save_path: Path) -> None:
         pass
-
-    @jax.jit
-    def train_network(self, states: np.ndarray, actions: np.ndarray, rewards: np.ndarray, next_states: np.ndarray,
-                      terminals: np.ndarray) -> jnp.ndarray:
-        next_state_values = self.q_network.apply(self.q_state.target_params, next_states) # (batch_size, num_actions)
-        max_next_state_value = jnp.max(next_state_values, axis=-1) # (batch_size, )
-        target_value = rewards + ((1.0 - terminals) * self.gamma * max_next_state_value) # (batch_size, )
-
-        def mse_loss() -> Tuple[jnp.ndarray, jnp.ndarray]:
-            state_value = self.q_network.apply(self.q_state.params, states) # (batch_ize, num_actions)
-            # Extracting state values for actions taken:
-            state_action_value = state_value[jnp.arrange(state_value.shape[0]), actions.squeeze()] # (batch_size, )
-            return ((state_action_value - target_value)**2).mean(), state_action_value
-
-        (loss, _), grads = jax.value_and_grad(mse_loss, has_aux=True)()
-        self.q_state = self.q_state.apply_gradients(grads=grads)
-        return loss
