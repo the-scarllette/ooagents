@@ -1,5 +1,3 @@
-from agents import Agent
+__all__ = ["agent_training"]
 
-def train_agent(environment, agent: Agent,
-                timesteps,):
-    return
+from . import agent_training

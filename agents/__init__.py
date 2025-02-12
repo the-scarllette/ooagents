@@ -1,4 +1,4 @@
-__all__ = ['Agent', 'DQN']
+__all__ = ['agent', 'dqn']
 
-from agents.agent import Agent
-from agents.dqn import DQN
+from . import agent
+from . import dqn

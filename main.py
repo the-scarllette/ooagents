@@ -1,14 +1,12 @@
+import gymnasium as gym
 from pathlib import Path
 
-from agents import Agent
-from utils import load_agent
+from agents.dqn import DQN
+from training.agent_training import train_agent
 
 if __name__ == '__main__':
 
-    test_agent = Agent([0, 1, 2])
-    agent_path = Path("test_agent.json")
-    test_agent.save(agent_path)
+    environment = gym.make("CartPole-v1")
+    print(environment.action_space.n)
 
-    test_agent = load_agent(agent_path, Agent)
-    print(test_agent.actions)
-
+    #dqn_agent = DQN(actions=buffer_size=10_000)

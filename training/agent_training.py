@@ -1,8 +1,9 @@
 from pathlib import Path
 import random
 
-from agents import Agent
-from utils import load_agent, print_progress_bar
+from agents.agent import Agent
+from utils.load_agent import load_agent
+from utils.progress_bar import print_progress_bar
 
 def run_epoch(environment, agent: Agent,
               epoch: int=50,

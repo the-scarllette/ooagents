@@ -10,7 +10,7 @@ import random
 from stable_baselines3.common.buffers import ReplayBuffer
 from typing import List, Tuple
 
-from agent import Agent
+from agents.agent import Agent
 
 class QNetwork(nn.Module):
     action_dim: int
@@ -29,10 +29,10 @@ class DQN(Agent):
 
     def __init__(self, actions: List[int], state_shape: Tuple[int],
                  network_shape: List[int], buffer_size: int,
-                 learning_rate: float=1e-4, gamma: float=0.9, tau: float=1e-3, batch_size: int=1e3,
-                 start_epsilon: float=0.1, end_epsilon: float=0.01, epsilon_scheduler: float=0.9,
-                 pre_learning_steps: int=1e3, learning_frequency: int=10, target_network_update_freq: int=100,
-                 output_loss_freq: int=0):
+                 learning_rate: float=2.5e-4, gamma: float=0.99, tau: float=1.0, batch_size: int=128,
+                 start_epsilon: float=1, end_epsilon: float=0.01, epsilon_scheduler: float=0.9,
+                 pre_learning_steps: int=1e3, learning_frequency: int=10, target_network_update_freq: int=500,
+                 output_loss_freq: int=100):
         self.actions: List[int] = actions
         self.action_dim: int = len(actions)
 
