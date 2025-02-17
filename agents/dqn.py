@@ -68,7 +68,7 @@ class DQN(Agent):
             apply_fn=self.q_network.apply,
             params=self.q_network.init(start_key, obs),
             target_params=self.q_network.init(start_key, obs),
-            tx=optax.adam(learning_rate)
+            tx=optax.adam(learning_rate=learning_rate)
         )
         self.q_network.apply = jax.jit(self.q_network.apply)
 
@@ -111,7 +111,7 @@ class DQN(Agent):
 
     def learn(self, state: np.ndarray, action: int|float, reward: float, next_state: np.ndarray,
               terminal: bool=False, next_state_possible_actions: List[int]|None=None) -> None:
-        @jax.jit
+
         def train_network(states: np.ndarray, actions: np.ndarray, rewards: np.ndarray,
                           next_states: np.ndarray,
                           terminals: np.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
@@ -127,7 +127,8 @@ class DQN(Agent):
                 return ((state_action_value - target_value) ** 2).mean(), state_action_value
 
             (loss, _), grads = jax.value_and_grad(mse_loss, has_aux=True)(self.q_state.params)
-            return loss, self.q_state.apply_gradients(grads=grads)
+            new_state = self.q_state.apply_gradients(grads=grads)
+            return loss, new_state
 
         done = 0
         if terminal:
