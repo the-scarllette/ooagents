@@ -1,0 +1,76 @@
+import numpy as np
+from pathlib import Path
+
+from agents.agent import Agent
+from typing import Dict, List, Tuple, Type
+
+class QLearningAgent(Agent):
+
+    def __init__(
+            self,
+            actions: int|List[int],
+            alpha: float,
+            epsilon: float,
+            gamma: float
+    ):
+        super().__init__(actions)
+
+        self.num_actions = len(self.actions)
+
+        self.alpha: float = alpha
+        self.epsilon: float = epsilon
+        self.gamma: float = gamma
+
+        self.q_values: Dict[str, np.ndarray] = {}
+        return
+
+    def choose_action(
+            self,
+            state: np.ndarray,
+            possible_actions: np.ndarray|None=None,
+            no_random: bool=False
+    ):
+        pass
+
+    def get_q_values(
+            self,
+            state: np.ndarray,
+    ) -> np.ndarray:
+        state_str = self.state_to_str(state)
+
+        try:
+            q_values = self.q_values[state_str]
+        except KeyError:
+            self.q_values[state_str] = np.zeros(self.num_actions)
+            q_values = self.q_values[state_str]
+
+        return q_values
+
+    def learn(
+            self,
+            state: np.ndarray,
+            action: int,
+            reward: float,
+            next_state: np.ndarray,
+            terminal: bool=False,
+            next_possible_actions: np.ndarray|None=None
+    ):
+        pass
+
+    @staticmethod
+    def load(
+            load_path: Path
+    ) -> 'QLearningAgent':
+        pass
+
+    def save(
+            self,
+            save_path: Path
+    ):
+        pass
+
+    @staticmethod
+    def state_to_str(
+            state: np.ndarray
+    ) -> str:
+        return np.array2string(state)
