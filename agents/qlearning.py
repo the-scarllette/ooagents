@@ -92,7 +92,21 @@ class QLearningAgent(Agent):
     def load(
             load_path: Path
     ) -> 'QLearningAgent':
-        pass
+        with open(load_path, 'r') as f:
+            agent_data = json.load(f)
+
+        q_learning_agent = QLearningAgent(
+            agent_data['actions'],
+            agent_data['alpha'],
+            agent_data['epsilon'],
+            agent_data['gamma']
+        )
+
+        q_learning_agent.q_values = {
+            state: np.array(agent_data['q_values'][state]) for state in agent_data['q_values']
+        }
+
+        return q_learning_agent
 
     def save(
             self,
