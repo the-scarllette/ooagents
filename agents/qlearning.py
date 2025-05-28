@@ -1,5 +1,6 @@
 import numpy as np
 from pathlib import Path
+import random
 
 from agents.agent import Agent
 from typing import Dict, List, Tuple, Type
@@ -30,7 +31,24 @@ class QLearningAgent(Agent):
             possible_actions: np.ndarray|None=None,
             no_random: bool=False
     ):
-        pass
+        if possible_actions is None:
+            possible_actions = self.actions
+
+        if no_random or (random.uniform(0, 1) <= self.epsilon):
+            return random.choice(possible_actions)
+
+        q_values = self.get_q_values(state)
+        max_value = -np.inf
+        chosen_actions = []
+        for action in possible_actions:
+            q_value = q_values[action]
+            if q_value > max_value:
+                max_value = q_value
+                chosen_actions  = [action]
+            elif q_value == max_value:
+                chosen_actions.append(action)
+
+        return random.choice(chosen_actions)
 
     def get_q_values(
             self,
@@ -41,7 +59,7 @@ class QLearningAgent(Agent):
         try:
             q_values = self.q_values[state_str]
         except KeyError:
-            self.q_values[state_str] = np.zeros(self.num_actions)
+            self.q_values[state_str] = np.zeros(self.num_actions, dtype=np.float32)
             q_values = self.q_values[state_str]
 
         return q_values
