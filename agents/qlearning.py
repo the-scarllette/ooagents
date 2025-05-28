@@ -73,7 +73,19 @@ class QLearningAgent(Agent):
             terminal: bool=False,
             next_possible_actions: np.ndarray|None=None
     ):
-        pass
+        if next_possible_actions is None:
+            next_possible_actions = self.actions
+        state_str = self.state_to_str(state)
+
+        q_value = self.get_q_values(state)[action]
+        next_state_q_values = self.get_q_values(next_state)[next_possible_actions]
+
+        max_next_value = 0.0
+        if not terminal:
+            max_next_value = np.max(next_state_q_values)
+
+        self.q_values[state_str][action] += self.alpha * (reward + (self.gamma * max_next_value) - q_value)
+        return
 
     @staticmethod
     def load(
