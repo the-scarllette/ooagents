@@ -4,7 +4,7 @@ from pathlib import Path
 import random
 
 from agents.agent import Agent
-from typing import Dict, List, Tuple, Type
+from typing import Dict, List
 
 class QLearningAgent(Agent):
 
@@ -116,7 +116,7 @@ class QLearningAgent(Agent):
             'actions': self.actions,
             'alpha': self.alpha,
             'epsilon': self.epsilon,
-            'gamma': self.gamma
+            'gamma': self.gamma,
             'q_values': {
                 state: self.q_values[state].tolist() for state in self.q_values
             }
