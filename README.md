@@ -39,6 +39,10 @@ while not done:
 
 Agents are implemented using [JAX](https://docs.jax.dev/en/latest/index.html).
 
+### Q-Learning
+The Q-Learning agent from [Watkins C.](https://www.cs.rhul.ac.uk/~chrisw/thesis.html).
+This agent is a tabular agent suited to small, discrete environments.
+
 ### DQN
 The DQN agent from [Mnih, V., Kavukcuoglu, K., Silver, D. et al.](https://www.nature.com/articles/nature14236#citeas)
 is implemented.
