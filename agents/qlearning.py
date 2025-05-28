@@ -1,3 +1,4 @@
+import json
 import numpy as np
 from pathlib import Path
 import random
@@ -97,7 +98,19 @@ class QLearningAgent(Agent):
             self,
             save_path: Path
     ):
-        pass
+        agent_data = {
+            'actions': self.actions,
+            'alpha': self.alpha,
+            'epsilon': self.epsilon,
+            'gamma': self.gamma
+            'q_values': {
+                state: self.q_values[state].tolist() for state in self.q_values
+            }
+        }
+
+        with open(save_path, 'w') as f:
+            json.dump(agent_data, f)
+        return
 
     @staticmethod
     def state_to_str(
