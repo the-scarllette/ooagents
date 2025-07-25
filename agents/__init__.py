@@ -1,4 +1,4 @@
-__all__ = ['agent', 'dqn']
+__all__ = ['agent', 'dqn', 'qlearning']
 
 from . import agent
 from . import dqn
