@@ -9,6 +9,10 @@ class VariationalAgent(Agent):
         super().__init__(actions)
         return
 
+    # sample from a replay buffer
+
+    # add to a replay buffer
+
     def learn_representation(
             self,
             state: np.ndarray,
@@ -17,5 +21,17 @@ class VariationalAgent(Agent):
             next_state: np.ndarray,
             terminal: bool=False,
             next_state_possible_actions: List[int]|None=None
+    ) -> None:
+        return
+
+    def learn_skill(
+            self,
+            skill: int,
+            state: np.ndarray,
+            action: int | float,
+            reward: float,
+            next_state: np.ndarray,
+            terminal: bool = False,
+            next_state_possible_actions: List[int] | None = None
     ) -> None:
         return
