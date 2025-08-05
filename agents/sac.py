@@ -13,6 +13,22 @@ from typing import List, Tuple
 
 from agents.agent import Agent
 
+class QNetwork(nn.Module):
+    action_dim: int
+    shape: List[int]
+
+    @nn.compact
+    def __call__(
+            self,
+            x: jnp.ndarray,
+    ) -> jnp.ndarray:
+        for size in self.shape:
+            x = nn.Dense(size)(x)
+            x = nn.relu(x)
+
+        x = nn.Dense(self.action_dim)(x)
+        return x
+
 class PolicyNetwork(nn.Module):
     action_dim: int
     shape: List[int]
@@ -88,7 +104,6 @@ class SAC(Agent):
     ):
         if network_shape is None:
             network_shape = [256, 256]
-        self.action_shape = environment.action_space.shape
         self.continuous_actions = continuous_actions
 
         self.state_shape: Tuple[int, ...] = environment.observation_space.shape
@@ -102,16 +117,36 @@ class SAC(Agent):
         self.learning_frequency: int = learning_frequency
         self.output_loss_freq: int = output_loss_freq
 
-        self.policy_network: PolicyNetwork = PolicyNetwork(
-            action_dim=self.action_shape[0],
-            shape=network_shape
-        )
-        self.q_network_1: SoftQNetwork = SoftQNetwork(
-            shape=network_shape
-        )
-        self.q_network_2: SoftQNetwork = SoftQNetwork(
-            shape=network_shape
-        )
+        self.policy_network: PolicyNetwork|QNetwork
+        self.q_network_1: SoftQNetwork|QNetwork
+        self.q_network_2: SoftQNetwork|QNetwork
+        if self.continuous_actions:
+            self.action_shape = environment.action_space.shape
+            self.policy_network = PolicyNetwork(
+                action_dim=self.action_shape[0],
+                shape=network_shape
+            )
+            self.q_network_1: SoftQNetwork = SoftQNetwork(
+                shape=network_shape
+            )
+            self.q_network_2: SoftQNetwork = SoftQNetwork(
+                shape=network_shape
+            )
+        else:
+            self.action_shape = (environment.action_space.n,)
+            self.policy_network = QNetwork(
+                action_dim=self.action_shape[0],
+                shape=network_shape
+            )
+            self.q_network_1 = QNetwork(
+                action_dim=self.action_shape[0],
+                shape=network_shape
+            )
+            self.q_network_2 = QNetwork(
+                action_dim=self.action_shape[0],
+                shape=network_shape
+            )
+
         self.value_network: ValueNetwork = ValueNetwork(
             shape=network_shape
         )
@@ -125,20 +160,38 @@ class SAC(Agent):
             tx=optax.adam(learning_rate=learning_rate)
         )
         self.policy_network.apply = jax.jit(self.policy_network.apply)
-        self.q_1: TrainState = TrainState.create(
-            apply_fn=self.q_network_1.apply,
-            params=self.q_network_1.init(start_key, jnp.array([obs]), jnp.array([environment.action_space.sample()])),
-            target_params=self.q_network_1.init(start_key, jnp.array([obs]), jnp.array([environment.action_space.sample()])),
-            tx=optax.adam(learning_rate=learning_rate)
-        )
-        self.q_network_1.apply = jax.jit(self.q_network_1.apply)
-        self.q_2: TrainState = TrainState.create(
-            apply_fn=self.q_network_2.apply,
-            params=self.q_network_2.init(start_key, jnp.array([obs]), jnp.array([environment.action_space.sample()])),
-            target_params=self.q_network_2.init(start_key, jnp.array([obs]), jnp.array([environment.action_space.sample()])),
-            tx=optax.adam(learning_rate=learning_rate)
-        )
-        self.q_network_2.apply = jax.jit(self.q_network_2.apply)
+
+        if self.continuous_actions:
+            self.q_1: TrainState = TrainState.create(
+                apply_fn=self.q_network_1.apply,
+                params=self.q_network_1.init(start_key, jnp.array([obs]), jnp.array([environment.action_space.sample()])),
+                target_params=self.q_network_1.init(start_key, jnp.array([obs]), jnp.array([environment.action_space.sample()])),
+                tx=optax.adam(learning_rate=learning_rate)
+            )
+            self.q_network_1.apply = jax.jit(self.q_network_1.apply)
+            self.q_2: TrainState = TrainState.create(
+                apply_fn=self.q_network_2.apply,
+                params=self.q_network_2.init(start_key, jnp.array([obs]), jnp.array([environment.action_space.sample()])),
+                target_params=self.q_network_2.init(start_key, jnp.array([obs]), jnp.array([environment.action_space.sample()])),
+                tx=optax.adam(learning_rate=learning_rate)
+            )
+            self.q_network_2.apply = jax.jit(self.q_network_2.apply)
+        else:
+            self.q_1: TrainState = TrainState.create(
+                apply_fn=self.q_network_1.apply,
+                params=self.q_network_1.init(start_key, obs),
+                target_params=self.q_network_1.init(start_key, obs),
+                tx=optax.adam(learning_rate=learning_rate)
+            )
+            self.q_network_1.apply = jax.jit(self.q_network_1.apply)
+            self.q_2: TrainState = TrainState.create(
+                apply_fn=self.q_network_2.apply,
+                params=self.q_network_2.init(start_key, obs),
+                target_params=self.q_network_2.init(start_key, obs),
+                tx=optax.adam(learning_rate=learning_rate)
+            )
+            self.q_network_2.apply = jax.jit(self.q_network_2.apply)
+
         self.value: TrainState = TrainState.create(
             apply_fn=self.value_network.apply,
             params=self.value_network.init(start_key, obs),
@@ -164,18 +217,22 @@ class SAC(Agent):
             possible_actions: List[int]|None=None,
             no_random: bool=False
     ) -> np.ndarray:
-        mean, log_std = self.policy_network.apply(
+        if self.continuous_actions:
+            mean, log_std = self.policy_network.apply(
+                self.policy.params,
+                state
+            )
+            std = np.array(jnp.exp(log_std))
+
+            action, _ = self.sample_action(mean, std)
+            return np.array(action)
+
+        logits = self.policy_network.apply(
             self.policy.params,
             state
         )
-        std = np.array(jnp.exp(log_std))
-
-        action, _ = self.sample_action(mean, std)
-
-        if self.continuous_actions:
-            return action
-
-        pass
+        action, _ = self.sample_discrete_action(logits)
+        return int(action)
 
     def learn(
             self,
@@ -191,80 +248,157 @@ class SAC(Agent):
                 states: np.ndarray
         ) -> Tuple[jnp.ndarray, jnp.ndarray]:
             def policy_loss_fn(params) -> Tuple[jnp.ndarray, jnp.ndarray]:
-                mean, log_std = self.policy_network.apply(
-                    self.policy.params,
-                    states
-                )
-                std = np.array(jnp.exp(log_std))
-                new_actions, log_probs = self.sample_action(mean, std)
+                if self.continuous_actions:
+                    mean, log_std = self.policy_network.apply(
+                        self.policy.params,
+                        states
+                    )
+                    std = np.array(jnp.exp(log_std))
+                    new_actions, log_probs = self.sample_action(mean, std)
 
-                q_1_values = self.q_network_1.apply(self.q_1.params, states, new_actions)
-                q_2_values = self.q_network_2.apply(self.q_2.params, states, new_actions)
-                predicted_q_value = jax.lax.min(q_1_values, q_2_values)
+                    q_1_values = self.q_network_1.apply(self.q_1.params, states, new_actions)
+                    q_2_values = self.q_network_2.apply(self.q_2.params, states, new_actions)
+                    predicted_q_value = jax.lax.min(q_1_values, q_2_values)
+                else:
+                    logits = self.policy_network.apply(
+                        self.policy.params,
+                        states
+                    )
+                    new_actions, log_probs = self.sample_discrete_action(logits)
+
+                    q_1_values = self.q_network_1.apply(self.q_1.params, states)
+                    q_2_values = self.q_network_2.apply(self.q_2.params, states)
+                    q_1_values = q_1_values[:, new_actions]
+                    q_2_values = q_2_values[:, new_actions]
+                    predicted_q_value = jax.lax.min(q_1_values, q_2_values)
 
                 loss = jnp.mean(log_probs - predicted_q_value)
                 l2_loss = 0.5 * sum(jnp.sum(jnp.square(p)) for p in jax.tree_leaves(params))
-                return loss + l2_loss, jnp.concatenate([mean, log_std], axis=1)
+
+                if self.continuous_actions:
+                    model_output = jnp.concatenate([mean, log_std], axis=1)
+                else:
+                    model_output = log_probs
+
+                return loss + l2_loss, model_output
 
             (p_loss, _), grads = jax.value_and_grad(policy_loss_fn, has_aux=True)(self.policy.params)
             new_policy_state = self.policy.apply_gradients(grads=grads)
             return p_loss, new_policy_state
 
-        def train_q(
-                states: np.ndarray,
-                actions: np.ndarray,
-                rewards: np.ndarray,
-                next_states: np.ndarray,
-                terminals: np.ndarray,
-        ) -> jnp.array:
-            target_q = self.value_network.apply(self.value.params, next_states)
-            target_q = (1 - terminals) * target_q
-            target_q = rewards * self.reward_scale + self.gamma * target_q
-            target_q = jax.lax.stop_gradient(target_q)
+        if self.continuous_actions:
+            def train_q(
+                    states: np.ndarray,
+                    actions: np.ndarray,
+                    rewards: np.ndarray,
+                    next_states: np.ndarray,
+                    terminals: np.ndarray,
+            ) -> jnp.array:
+                target_q = self.value_network.apply(self.value.params, next_states)
+                target_q = (1 - terminals) * target_q
+                target_q = rewards * self.reward_scale + self.gamma * target_q
+                target_q = jax.lax.stop_gradient(target_q)
 
-            def q1_loss_fn(params) -> Tuple[jnp.ndarray, jnp.ndarray]:
-                q1_value = self.q_network_1.apply(params, states, actions)
-                q2_value = self.q_network_2.apply(self.q_2.params, states, actions)
+                def q1_loss_fn(params) -> Tuple[jnp.ndarray, jnp.ndarray]:
+                    q1_value = self.q_network_1.apply(params, states, actions)
+                    q2_value = self.q_network_2.apply(self.q_2.params, states, actions)
 
-                q1_td = target_q - q1_value
-                q2_td = target_q - q2_value
+                    q1_td = target_q - q1_value
+                    q2_td = target_q - q2_value
 
-                q1_loss = 0.5 * jnp.mean(jnp.square(q1_td))
-                q2_loss = 0.5 * jnp.mean(jnp.square(q2_td))
-                return q1_loss + q2_loss, q1_value
+                    q1_loss = 0.5 * jnp.mean(jnp.square(q1_td))
+                    q2_loss = 0.5 * jnp.mean(jnp.square(q2_td))
+                    return q1_loss + q2_loss, q1_value
 
-            def q2_loss_fn(params) -> Tuple[jnp.ndarray, jnp.ndarray]:
-                q1_value = self.q_network_1.apply(self.q_1.params, states, actions)
-                q2_value = self.q_network_2.apply(params, states, actions)
+                def q2_loss_fn(params) -> Tuple[jnp.ndarray, jnp.ndarray]:
+                    q1_value = self.q_network_1.apply(self.q_1.params, states, actions)
+                    q2_value = self.q_network_2.apply(params, states, actions)
 
-                q1_td = target_q - q1_value
-                q2_td = target_q - q2_value
+                    q1_td = target_q - q1_value
+                    q2_td = target_q - q2_value
 
-                q1_loss = 0.5 * jnp.mean(jnp.square(q1_td))
-                q2_loss = 0.5 * jnp.mean(jnp.square(q2_td))
-                return q1_loss + q2_loss, q2_value
+                    q1_loss = 0.5 * jnp.mean(jnp.square(q1_td))
+                    q2_loss = 0.5 * jnp.mean(jnp.square(q2_td))
+                    return q1_loss + q2_loss, q2_value
 
-            (_, _), grads_1 = jax.value_and_grad(q1_loss_fn, has_aux=True)(self.q_1.params)
-            (total_q_loss, _), grads_2 = jax.value_and_grad(q2_loss_fn, has_aux=True)(self.q_2.params)
+                (_, _), grads_1 = jax.value_and_grad(q1_loss_fn, has_aux=True)(self.q_1.params)
+                (total_q_loss, _), grads_2 = jax.value_and_grad(q2_loss_fn, has_aux=True)(self.q_2.params)
 
-            q1_new_state = self.q_1.apply_gradients(grads=grads_1)
-            q2_new_state = self.q_2.apply_gradients(grads=grads_2)
+                q1_new_state = self.q_1.apply_gradients(grads=grads_1)
+                q2_new_state = self.q_2.apply_gradients(grads=grads_2)
 
-            return total_q_loss, q1_new_state, q2_new_state
+                return total_q_loss, q1_new_state, q2_new_state
+        else:
+            def train_q(
+                    states: np.ndarray,
+                    actions: np.ndarray,
+                    rewards: np.ndarray,
+                    next_states: np.ndarray,
+                    terminals: np.ndarray,
+            ) -> jnp.array:
+                target_q = self.value_network.apply(self.value.params, next_states)
+                target_q = (1 - terminals) * target_q
+                target_q = rewards * self.reward_scale + self.gamma * target_q
+                target_q = jax.lax.stop_gradient(target_q)
+
+                def q1_loss_fn(params) -> Tuple[jnp.ndarray, jnp.ndarray]:
+                    q1_value = self.q_network_1.apply(params, states)
+                    q1_value = q1_value[np.arange(self.minibatch_size), actions]
+                    q2_value = self.q_network_2.apply(self.q_2.params, states)
+                    q2_value = q2_value[np.arange(self.minibatch_size), actions]
+
+                    q1_td = target_q - q1_value
+                    q2_td = target_q - q2_value
+
+                    q1_loss = 0.5 * jnp.mean(jnp.square(q1_td))
+                    q2_loss = 0.5 * jnp.mean(jnp.square(q2_td))
+                    return q1_loss + q2_loss, q1_value
+
+                def q2_loss_fn(params) -> Tuple[jnp.ndarray, jnp.ndarray]:
+                    q1_value = self.q_network_1.apply(self.q_1.params, states)
+                    q1_value = q1_value[np.arange(self.minibatch_size), actions]
+                    q2_value = self.q_network_2.apply(params, states)
+                    q2_value = q2_value[np.arange(self.minibatch_size), actions]
+
+                    q1_td = target_q - q1_value
+                    q2_td = target_q - q2_value
+
+                    q1_loss = 0.5 * jnp.mean(jnp.square(q1_td))
+                    q2_loss = 0.5 * jnp.mean(jnp.square(q2_td))
+                    return q1_loss + q2_loss, q2_value
+
+                (_, _), grads_1 = jax.value_and_grad(q1_loss_fn, has_aux=True)(self.q_1.params)
+                (total_q_loss, _), grads_2 = jax.value_and_grad(q2_loss_fn, has_aux=True)(self.q_2.params)
+
+                q1_new_state = self.q_1.apply_gradients(grads=grads_1)
+                q2_new_state = self.q_2.apply_gradients(grads=grads_2)
+
+                return total_q_loss, q1_new_state, q2_new_state
 
         def train_v(
                 states: np.ndarray
         ) -> jnp.array:
-            mean, log_std = self.policy_network.apply(
-                self.policy.params,
-                states
-            )
-            std = np.array(jnp.exp(log_std))
+            if self.continuous_actions:
+                mean, log_std = self.policy_network.apply(
+                    self.policy.params,
+                    states
+                )
+                std = np.array(jnp.exp(log_std))
 
-            new_actions, log_probs = self.sample_action(mean, std)
+                new_actions, log_probs = self.sample_action(mean, std)
+                q1_value = self.q_network_1.apply(self.q_1.params, states, new_actions)
+                q2_value = self.q_network_2.apply(self.q_2.params, states, new_actions)
+            else:
+                logits = self.policy_network.apply(
+                    self.policy.params,
+                    states
+                )
+                new_actions, log_probs = self.sample_discrete_action(logits)
 
-            q1_value = self.q_network_1.apply(self.q_1.params, states, new_actions)
-            q2_value = self.q_network_2.apply(self.q_2.params, states, new_actions)
+                q1_value = self.q_network_1.apply(self.q_1.params, states)
+                q1_value = q1_value[np.arange(self.minibatch_size), new_actions]
+                q2_value = self.q_network_2.apply(self.q_2.params, states)
+                q2_value = q2_value[np.arange(self.minibatch_size), new_actions]
 
             q_min = jax.lax.min(q1_value, q2_value)
             target_value = q_min - log_probs
@@ -322,16 +456,27 @@ class SAC(Agent):
     def load(load_path: Path) -> 'SAC':
         pass
 
+    @staticmethod
     def sample_action(
-            self,
             mean: np.ndarray,
             std: np.ndarray
-    ) -> tuple[Array, Array]:
+    ) -> Tuple[Array, Array]:
         action = np.random.normal(mean, std)
         action = jnp.tanh(action)
 
         log_prob = jax.scipy.stats.norm.logpdf(action, mean, std)
         log_prob -= jnp.log((1-jnp.pow(action, 2)) + 1e-6)
+        return action, log_prob
+
+    @staticmethod
+    def sample_discrete_action(
+            logits: jnp.ndarray
+    ) -> Tuple[Array, Array]:
+        action = jax.random.categorical(jax.random.PRNGKey(0), logits)
+        if len(logits.shape) <= 1:
+            log_prob = logits[action]
+        else:
+            log_prob = logits[np.arange(logits.shape[0]), action]
         return action, log_prob
 
     def save(self, save_path: Path) -> None:

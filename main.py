@@ -9,16 +9,17 @@ from training.agent_training import train_agent
 
 if __name__ == '__main__':
 
-    environment = gym.make("Ant-v5")
+    environment = gym.make("CartPole-v1")
 
     print("Creating SAC Agent")
     sac_agent = SAC(
         environment,
-        True
+        False,
+        network_shape=[64, 64]
     )
 
     print("Running initial environment")
-    environment = gym.make("Ant-v5")
+    environment = gym.make("CartPole-v1")
     episode_over = False
     state, _ = environment.reset()
     total_reward_pre_training = 0
@@ -32,7 +33,7 @@ if __name__ == '__main__':
     train_agent(
         environment,
         sac_agent,
-        500_000,
+        100_000,
         0,
         0,
         progress_bar=True
@@ -40,7 +41,7 @@ if __name__ == '__main__':
 
     print("Running final environment")
     episode_over = False
-    environment = gym.make("Ant-v5", render_mode="human")
+    environment = gym.make("CartPole-v1", render_mode="human")
     state, _ = environment.reset()
     total_reward = 0
     while not episode_over:
