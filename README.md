@@ -47,6 +47,9 @@ This agent is a tabular agent suited to small, discrete environments.
 The DQN agent from [Mnih, V., Kavukcuoglu, K., Silver, D. et al.](https://www.nature.com/articles/nature14236#citeas)
 is implemented.
 
+### Soft Actor-Critic (SAC)
+Implemented Soft Actor-Critic from [Haarnoja et al](https://arxiv.org/abs/1801.01290).
+
 ## License
 
 [MIT](https://choosealicense.com/licenses/mit/)
