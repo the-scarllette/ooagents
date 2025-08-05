@@ -17,6 +17,9 @@ class PolicyNetwork(nn.Module):
     action_dim: int
     shape: List[int]
 
+    LOG_STD_MIN: float=-5
+    LOG_STD_RANGE: float = 7 # LOG_MAX - LOG_MIN
+
     @nn.compact
     def __call__(
             self,
@@ -30,6 +33,7 @@ class PolicyNetwork(nn.Module):
 
         log_std = nn.Dense(self.action_dim)(x)
         log_std = jnp.tanh(log_std)
+        log_std = self.LOG_STD_MIN + 0.5 * self.LOG_STD_RANGE * (log_std + 1)
         return mean, log_std
 
 class SoftQNetwork(nn.Module):
