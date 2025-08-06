@@ -1,11 +1,13 @@
 import flax
 import flax.linen as nn
+from flax.training import orbax_utils
 from flax.training.train_state import TrainState
 import gymnasium as gym
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+import orbax
 from pathlib import Path
 import random
 from stable_baselines3.common.buffers import ReplayBuffer
@@ -32,7 +34,8 @@ class TrainState(TrainState):
 
 class DQN(Agent):
 
-    def __init__(self, environment: gym.Env,
+    def __init__(self,
+                 environment: gym.Env,
                  network_shape: List[int], buffer_size: int,
                  learning_rate: float=2.5e-4, gamma: float=0.99, tau: float=1.0, batch_size: int=128,
                  start_epsilon: float=1, end_epsilon: float=0.05, epsilon_scheduler: float=0.999,
@@ -41,7 +44,9 @@ class DQN(Agent):
         self.action_dim: int = environment.action_space.n
         self.actions: List[int] = list(range(self.action_dim))
 
-        self.state_shape: Tuple[int, ...] = environment.observation_space.shape
+        self.state_shape: Tuple[int, ...] = environment.action_space.shape
+
+        self.network_shape: List[int] = network_shape
 
         self.gamma: float = gamma
 
@@ -61,7 +66,7 @@ class DQN(Agent):
         self.output_loss_freq: int = output_loss_freq
 
         self.q_network: QNetwork = QNetwork(action_dim=self.action_dim,
-                                            shape=network_shape)
+                                            shape=self.network_shape)
         start_key = jax.random.PRNGKey(0)
         obs, _ = environment.reset()
         self.q_state = TrainState.create(
@@ -165,8 +170,20 @@ class DQN(Agent):
         return
 
     @staticmethod
-    def load(load_path: Path) -> 'DQN':
+    def load(environment: Env, load_path: Path) -> 'DQN':
+        orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
+        raw_load = orbax_checkpointer.restore(load_path)
         pass
 
     def save(self, save_path: Path) -> None:
-        pass
+        ckpt = {
+            'model': self.q_state,
+            'action_dim': self.action_dim,
+            'state_shape': self.state_shape,
+            'network_shape': self.network_shape,
+        }
+
+        orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
+        save_args = orbax_utils.save_args_from_target(ckpt)
+        orbax_checkpointer.save(save_path, ckpt, save_args=save_args)
+        return

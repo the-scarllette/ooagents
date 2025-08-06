@@ -1,3 +1,4 @@
+import gymnasium as gym
 import json
 import numpy as np
 from pathlib import Path
@@ -24,7 +25,7 @@ class Agent:
         return None
 
     @staticmethod
-    def load(load_path: Path) -> 'Agent':
+    def load(environment: gym.Env, load_path: Path) -> 'Agent':
         with load_path.open('r') as f:
             agent_data = json.load(f)
         return Agent(agent_data['actions'])
