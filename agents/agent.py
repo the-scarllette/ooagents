@@ -4,8 +4,9 @@ import numpy as np
 from pathlib import Path
 import random
 from typing import List, Tuple, Type
+from abc import ABC, abstractmethod
 
-class Agent:
+class Agent(ABC):
 
     def __init__(self, actions: int| List[int] | Tuple[int]):
         if type(actions) == int:
@@ -20,6 +21,7 @@ class Agent:
             return self.actions[0]
         return random.choice(self.actions)
 
+    @abstractmethod
     def learn(self, state: np.ndarray, action: int|float, reward: float, next_state: np.ndarray,
               terminal: bool=False, next_state_possible_actions: List[int]|None=None) -> None:
         return None

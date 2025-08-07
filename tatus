@@ -1,0 +1,10 @@
+* [33mbf41804[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mvariational-skill-discovery[m[33m, [m[1;31morigin/variational-skill-discovery[m[33m)[m updating innit
+* [33m055eeff[m updating innit
+* [33md3b630e[m adding superclass
+* [33mc9fec7f[m adding requirements file
+* [33m0221da0[m[33m ([m[1;31morigin/master[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmaster[m[33m)[m updating innit
+* [33m8cefdfc[m[33m ([m[1;31morigin/q-learning[m[33m)[m updated readme
+* [33m0d7bdb8[m fixing bugs
+* [33m05426bc[m load method added - q learning agent finished
+* [33m56b53eb[m save method added
+* [33me3cfc31[m added learn method
