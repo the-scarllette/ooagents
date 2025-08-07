@@ -1,6 +1,6 @@
 import numpy as np
 from typing import List, Tuple
-
+from abc import abstractmethod
 from agents.agent import Agent
 
 class VariationalAgent(Agent):
@@ -12,18 +12,20 @@ class VariationalAgent(Agent):
     # sample from a replay buffer
 
     # add to a replay buffer
-
+    @abstractmethod
     def learn_representation(
             self,
             state: np.ndarray,
             action: int|float,
             reward: float,
             next_state: np.ndarray,
+            skill: np.ndarray,
             terminal: bool=False,
             next_state_possible_actions: List[int]|None=None
     ) -> None:
         return
 
+    @abstractmethod
     def learn_skill(
             self,
             skill: int,
@@ -35,3 +37,4 @@ class VariationalAgent(Agent):
             next_state_possible_actions: List[int] | None = None
     ) -> None:
         return
+
