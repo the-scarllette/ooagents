@@ -1,6 +1,6 @@
 import flax
 import flax.linen as nn
-from flax.training import checkpoints, orbax_utils
+from flax.training import orbax_utils
 from flax.training.train_state import TrainState
 import gymnasium as gym
 import jax

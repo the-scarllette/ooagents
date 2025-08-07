@@ -1,11 +1,13 @@
 import flax
 import flax.linen as nn
+from flax.training import orbax_utils
 from flax.training.train_state import TrainState
 import gymnasium as gym
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+import orbax
 from pathlib import Path
 from jax import Array
 from stable_baselines3.common.buffers import ReplayBuffer
@@ -103,13 +105,13 @@ class SAC(Agent):
             output_loss_freq: int=1e4
     ):
         if network_shape is None:
-            network_shape = [256, 256]
+            self.network_shape = [256, 256]
         self.continuous_actions = continuous_actions
 
         self.state_shape: Tuple[int, ...] = environment.observation_space.shape
         self.buffer_size: int = buffer_size
         self.minibatch_size: int = minibatch_size
-        self.learning_ate: float = learning_rate
+        self.learning_rate: float = learning_rate
         self.gamma: float = gamma
         self.reward_scale: float = reward_scale
 
@@ -124,31 +126,31 @@ class SAC(Agent):
             self.action_shape = environment.action_space.shape
             self.policy_network = PolicyNetwork(
                 action_dim=self.action_shape[0],
-                shape=network_shape
+                shape=self.network_shape
             )
             self.q_network_1: SoftQNetwork = SoftQNetwork(
-                shape=network_shape
+                shape=self.network_shape
             )
             self.q_network_2: SoftQNetwork = SoftQNetwork(
-                shape=network_shape
+                shape=self.network_shape
             )
         else:
             self.action_shape = (environment.action_space.n,)
             self.policy_network = QNetwork(
                 action_dim=self.action_shape[0],
-                shape=network_shape
+                shape=self.network_shape
             )
             self.q_network_1 = QNetwork(
                 action_dim=self.action_shape[0],
-                shape=network_shape
+                shape=self.network_shape
             )
             self.q_network_2 = QNetwork(
                 action_dim=self.action_shape[0],
-                shape=network_shape
+                shape=self.network_shape
             )
 
         self.value_network: ValueNetwork = ValueNetwork(
-            shape=network_shape
+            shape=self.network_shape
         )
 
         start_key = jax.random.PRNGKey(0)
@@ -157,7 +159,7 @@ class SAC(Agent):
             apply_fn=self.policy_network.apply,
             params=self.policy_network.init(start_key, obs),
             target_params=self.policy_network.init(start_key, obs),
-            tx=optax.adam(learning_rate=learning_rate)
+            tx=optax.adam(learning_rate=self.learning_rate)
         )
         self.policy_network.apply = jax.jit(self.policy_network.apply)
 
@@ -166,14 +168,14 @@ class SAC(Agent):
                 apply_fn=self.q_network_1.apply,
                 params=self.q_network_1.init(start_key, jnp.array([obs]), jnp.array([environment.action_space.sample()])),
                 target_params=self.q_network_1.init(start_key, jnp.array([obs]), jnp.array([environment.action_space.sample()])),
-                tx=optax.adam(learning_rate=learning_rate)
+                tx=optax.adam(learning_rate=self.learning_rate)
             )
             self.q_network_1.apply = jax.jit(self.q_network_1.apply)
             self.q_2: TrainState = TrainState.create(
                 apply_fn=self.q_network_2.apply,
                 params=self.q_network_2.init(start_key, jnp.array([obs]), jnp.array([environment.action_space.sample()])),
                 target_params=self.q_network_2.init(start_key, jnp.array([obs]), jnp.array([environment.action_space.sample()])),
-                tx=optax.adam(learning_rate=learning_rate)
+                tx=optax.adam(learning_rate=self.learning_rate)
             )
             self.q_network_2.apply = jax.jit(self.q_network_2.apply)
         else:
@@ -181,14 +183,14 @@ class SAC(Agent):
                 apply_fn=self.q_network_1.apply,
                 params=self.q_network_1.init(start_key, obs),
                 target_params=self.q_network_1.init(start_key, obs),
-                tx=optax.adam(learning_rate=learning_rate)
+                tx=optax.adam(learning_rate=self.learning_rate)
             )
             self.q_network_1.apply = jax.jit(self.q_network_1.apply)
             self.q_2: TrainState = TrainState.create(
                 apply_fn=self.q_network_2.apply,
                 params=self.q_network_2.init(start_key, obs),
                 target_params=self.q_network_2.init(start_key, obs),
-                tx=optax.adam(learning_rate=learning_rate)
+                tx=optax.adam(learning_rate=self.learning_rate)
             )
             self.q_network_2.apply = jax.jit(self.q_network_2.apply)
 
@@ -196,7 +198,7 @@ class SAC(Agent):
             apply_fn=self.value_network.apply,
             params=self.value_network.init(start_key, obs),
             target_params=self.value_network.init(start_key, obs),
-            tx=optax.adam(learning_rate=learning_rate)
+            tx=optax.adam(learning_rate=self.learning_rate)
         )
         self.value_network.apply = jax.jit(self.value_network.apply)
 
@@ -453,8 +455,42 @@ class SAC(Agent):
         return
 
     @staticmethod
-    def load(load_path: Path) -> 'SAC':
-        pass
+    def load(environment: gym.Env, load_path: Path) -> SAC:
+        orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
+        raw_load = orbax_checkpointer.restore(load_path.resolve())
+
+        agent = SAC(
+            environment,
+            raw_load['agent_details']['continuous_actions'],
+            raw_load['agent_details']['network_shape'],
+            raw_load['agent_details']['buffer_size'],
+            raw_load['agent_details']['reward_scale'],
+            raw_load['agent_details']['learning_rate'],
+            raw_load['agent_details']['gamma'],
+            raw_load['agent_details']['minibatch_size'],
+            raw_load['agent_details']['pre_learning_steps'],
+            raw_load['agent_details']['learning_frequency'],
+            raw_load['agent_details']['output_loss_freq'],
+        )
+
+        agent.policy = agent.policy.replace(
+            params=raw_load['policy']['params'],
+            target_params=raw_load['policy']['target_params'],
+        )
+        agent.q_1 = agent.q_1.replace(
+            params=raw_load['q_1']['params'],
+            target_params=raw_load['q_1']['target_params'],
+        )
+        agent.q_2 = agent.q_2.replace(
+            params=raw_load['q_2']['params'],
+            target_params=raw_load['q_2']['target_params'],
+        )
+        agent.value = agent.value_replace(
+            params=raw_load['value']['params'],
+            target_params=raw_load['value']['target_params'],
+        )
+
+        return agent
 
     @staticmethod
     def sample_action(
@@ -480,4 +516,39 @@ class SAC(Agent):
         return action, log_prob
 
     def save(self, save_path: Path) -> None:
-        pass
+        ckpt = {
+            'policy': {
+                'params': self.policy.params,
+                'target_params': self.policy.target_params,
+            },
+            'q_1': {
+                'params': self.q_1.params,
+                'target_params': self.q_1.target_params,
+            },
+            'q_2': {
+                'params': self.q_2.params,
+                'target_params': self.q_2.target_params,
+            },
+            'value': {
+                'params': self.value.params,
+                'target_params': self.value.target_params,
+            },
+            'agent_details':
+                {
+                    'continuous_actions': self.continuous_actions,
+                    'network_shape': self.network_shape,
+                    'buffer_size': self.buffer_size,
+                    'reward_scale': self.reward_scale,
+                    'learning_rate': self.learning_rate,
+                    'gamma': self.gamma,
+                    'minibatch_size': self.minibatch_size,
+                    'pre_learning_steps': self.pre_learning_steps,
+                    'learning_frequency': self.learning_frequency,
+                    'output_loss_freq': self.output_loss_freq
+                }
+        }
+
+        orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
+        save_args = orbax_utils.save_args_from_target(ckpt)
+        orbax_checkpointer.save(save_path.resolve(), ckpt, save_args=save_args)
+        return
