@@ -1,6 +1,6 @@
 import flax
 import flax.linen as nn
-from flax.training import orbax_utils
+from flax.training import checkpoints, orbax_utils
 from flax.training.train_state import TrainState
 import gymnasium as gym
 import jax
@@ -48,6 +48,8 @@ class DQN(Agent):
 
         self.network_shape: List[int] = network_shape
 
+        self.learning_rate: float = learning_rate
+
         self.gamma: float = gamma
 
         self.tau: float = tau
@@ -73,7 +75,7 @@ class DQN(Agent):
             apply_fn=self.q_network.apply,
             params=self.q_network.init(start_key, obs),
             target_params=self.q_network.init(start_key, obs),
-            tx=optax.adam(learning_rate=learning_rate)
+            tx=optax.adam(learning_rate=self.learning_rate)
         )
         self.q_network.apply = jax.jit(self.q_network.apply)
 
@@ -119,7 +121,7 @@ class DQN(Agent):
 
         def train_network(states: np.ndarray, actions: np.ndarray, rewards: np.ndarray,
                           next_states: np.ndarray,
-                          terminals: np.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+                          terminals: np.ndarray) -> Tuple[jnp.ndarray, TrainState]:
             next_state_values = self.q_network.apply(self.q_state.target_params,
                                                      next_states)  # (batch_size, num_actions)
             max_next_state_value = jnp.max(next_state_values, axis=-1)  # (batch_size, )
@@ -170,20 +172,61 @@ class DQN(Agent):
         return
 
     @staticmethod
-    def load(environment: Env, load_path: Path) -> 'DQN':
+    def load(environment: gym.Env, load_path: Path) -> 'DQN':
         orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
-        raw_load = orbax_checkpointer.restore(load_path)
-        pass
+        raw_load = orbax_checkpointer.restore(load_path.resolve())
+
+        agent = DQN(
+            environment,
+            raw_load['agent_details']['network_shape'],
+            raw_load['agent_details']['buffer_size'],
+            raw_load['agent_details']['learning_rate'],
+            raw_load['agent_details']['gamma'],
+            raw_load['agent_details']['tau'],
+            raw_load['agent_details']['batch_size'],
+            raw_load['agent_details']['start_epsilon'],
+            raw_load['agent_details']['end_epsilon'],
+            raw_load['agent_details']['epsilon_scheduler'],
+            raw_load['agent_details']['pre_learning_steps'],
+            raw_load['agent_details']['learning_frequency'],
+            raw_load['agent_details']['target_network_update_freq'],
+            raw_load['agent_details']['output_loss_freq']
+        )
+
+        agent.q_state = agent.q_state.replace(
+            params=raw_load['model']['params'],
+            target_params=raw_load['model']['target_params']
+        )
+
+        agent.epsilon = raw_load['agent_details']['epsilon']
+
+        return agent
 
     def save(self, save_path: Path) -> None:
         ckpt = {
-            'model': self.q_state,
-            'action_dim': self.action_dim,
-            'state_shape': self.state_shape,
-            'network_shape': self.network_shape,
+            'model': {
+                'params': self.q_state.params,
+                'target_params': self.q_state.target_params,
+            },
+            'agent_details': {
+                'network_shape': self.network_shape,
+                'buffer_size': self.replay_buffer.buffer_size,
+                'learning_rate': self.learning_rate,
+                'gamma': self.gamma,
+                'tau': self.tau,
+                'batch_size': self.batch_size,
+                'start_epsilon': self.start_epsilon,
+                'end_epsilon': self.end_epsilon,
+                'epsilon': self.epsilon,
+                'epsilon_scheduler': self.epsilon_scheduler,
+                'pre_learning_steps': self.pre_learning_steps,
+                'learning_frequency': self.learning_frequency,
+                'target_network_update_freq': self.target_network_update_freq,
+                'output_loss_freq': self.output_loss_freq
+            }
         }
 
         orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
         save_args = orbax_utils.save_args_from_target(ckpt)
-        orbax_checkpointer.save(save_path, ckpt, save_args=save_args)
+        orbax_checkpointer.save(save_path.resolve(), ckpt, save_args=save_args)
         return
