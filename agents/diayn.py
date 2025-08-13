@@ -1,15 +1,17 @@
 import flax
 import flax.linen as nn
+from flax.training import orbax_utils
 from flax.training.train_state import TrainState
 import gymnasium as gym
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+import orbax
 from pathlib import Path
 import random
 from stable_baselines3.common.buffers import ReplayBuffer
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 from agents.sac import SAC
 from agents.variationalagent import VariationalAgent
@@ -31,22 +33,6 @@ class DiscriminatorNetwork(nn.Module):
         x = nn.softmax(x)
         return x
 
-class PolicyNetwork(nn.Module):
-    action_dim: int
-    shape: List[int]
-
-    @nn.compact
-    def __call__(
-            self,
-            x: jnp.ndarray
-    ) -> jnp.ndarray:
-        for size in self.shape:
-            x = nn.Dense(size)(x)
-            x = nn.relu(x)
-
-        x = nn.Dense(self.action_dim)(x)
-        return x
-
 class TrainState(TrainState):
     target_params: flax.core.FrozenDict
 
@@ -56,7 +42,7 @@ class DIAYN(VariationalAgent):
             self,
             environment: gym.Env,
             continuous_actions: bool,
-            actions: int | List[int] | Tuple[int],
+            meta_controller_shape: None|List[int]=None,
             policy_shape: None|List[int]=None,
             discriminator_shape: None|List[int]=None,
             buffer_size: int=1_000_000,
@@ -73,14 +59,15 @@ class DIAYN(VariationalAgent):
             num_skills: None | int = 3,
             output_loss_frequency: int=1e4
     ):
-        super().__init__(actions)
-
-        self.policy_shape: None|List[int] = policy_shape
-        if self.policy_shape is None:
-            self.policy_shape = [256, 256]
+        self.meta_controller_shape: None|List[int] = meta_controller_shape
+        if self.meta_controller_shape is None:
+            self.meta_controller_shape = [256, 256]
         self.discriminator_shape: None|List[int] = discriminator_shape
         if self.discriminator_shape is None:
             self.discriminator_shape = [256, 256]
+        self.policy_shape: None|List[int] = policy_shape
+        if self.policy_shape is None:
+            self.policy_shape = [256, 256]
 
         self.buffer_size: int = buffer_size
         self.minibatch_size: int = minibatch_size
@@ -91,6 +78,7 @@ class DIAYN(VariationalAgent):
             self.num_skills = 1
 
         self.continuous_actions: bool = continuous_actions
+        self.reward_scale: float = reward_scale
 
         self.tau: float = tau
 
@@ -103,11 +91,6 @@ class DIAYN(VariationalAgent):
         self.state_shape: Tuple[int, ...] = environment.observation_space.shape
         self.state_skill_shape: Tuple[int] = (self.state_shape[0] + self.num_skills,)
 
-
-        self.policy_network: PolicyNetwork = PolicyNetwork(
-            action_dim=self.num_skills,
-            shape=self.policy_shape,
-        )
         self.discriminator_network: DiscriminatorNetwork = DiscriminatorNetwork(
             action_dim=self.num_skills,
             shape=self.discriminator_shape,
@@ -115,15 +98,8 @@ class DIAYN(VariationalAgent):
 
         start_key = jax.random.PRNGKey(0)
         obs, _ = environment.reset()
-        self.policy: TrainState = TrainState.create(
-            apply_fn=self.policy_network.apply,
-            params=self.policy_network.init(start_key, obs),
-            target_params=self.policy_network.init(start_key, obs),
-            tx=optax.adam(learning_rate=self.learning_rate)
-        )
 
         sample_skill = jnp.zeros(self.num_skills)
-        self.policy.apply = jax.jit(self.policy_network.apply)
         self.discriminator: TrainState = TrainState.create(
             apply_fn=self.discriminator_network.apply,
             params=self.discriminator_network.init(start_key, obs),
@@ -154,7 +130,7 @@ class DIAYN(VariationalAgent):
             continuous_actions,
             self.policy_shape,
             buffer_size,
-            reward_scale,
+            self.reward_scale,
             self.learning_rate,
             gamma,
             self.tau,
@@ -167,47 +143,152 @@ class DIAYN(VariationalAgent):
             observation_sample=state_skill_sample
         )
 
+        self.meta_controller: SAC = SAC(
+            environment,
+            not self.discrete_skills,
+            self.meta_controller_shape,
+            self.buffer_size,
+            self.reward_scale,
+            self.learning_rate,
+            gamma,
+            self.tau,
+            self.minibatch_size,
+            self.pre_learning_steps,
+            self.learning_frequency,
+            self.output_loss_frequency,
+            self.target_network_update_freq,
+            action_shape=(self.num_skills,),
+            action_sample=sample_skill
+        )
+
         self.training_steps: int = 0
+
+        self.current_skill_start_state: None|np.ndarray = None
+        self.current_skill: None|np.ndarray = None
+        self.current_skill_steps: int = 0
+        self.current_skill_reward: float = 0
         return
+
+    def agent_dict(self) -> Dict[
+        str, np.ndarray | int | float | List[int] | Dict[str, np.ndarray | int | float | List[int]]]:
+        agent_dictionary = {
+            'discriminator': {
+                'params': self.discriminator.params,
+                'target_params': self.discriminator.target_params,
+            },
+            'action_policy': self.action_policy.agent_dict(),
+            'meta_controller': self.meta_controller.agent_dict(),
+            'agent_details': {
+                'policy_shape': self.policy_shape,
+                'meta_controller_shape': self.meta_controller_shape,
+                'discriminator_shape': self.discriminator_shape,
+                'buffer_size': self.buffer_size,
+                'reward_scale': self.reward_scale,
+                'minibatch_size': self.minibatch_size,
+                'learning_rate': self.learning_rate,
+                'discrete_skills': self.discrete_skills,
+                'num_skills': self.num_skills,
+                'continuous_actions': self.continuous_actions,
+                'tau': self.tau,
+                'skill_selection_frequency': self.skill_selection_frequency,
+                'pre_learning_steps': self.pre_learning_steps,
+                'learning_frequency': self.learning_frequency,
+                'output_loss_frequency': self.output_loss_frequency,
+                'target_network_update_freq': self.target_network_update_freq,
+                'state_shape': self.state_shape,
+                'state_skill_shape': self.state_skill_shape,
+            }
+        }
+        return agent_dictionary
 
     def choose_action(self, state: np.ndarray, possible_actions: List[int]|None=None,
                       no_random: bool=False) -> int|float:
-        if no_random:
-            return self.actions[0]
-        return random.choice(self.actions)
+        if self.current_skill is None:
+            self.current_skill_start_state = state
+            self.current_skill = self.choose_skill(state)
+
+        action = self.action_policy.choose_action(state)
+
+        return action
+
+    def choose_skill(
+            self,
+            state: np.ndarray
+    ) -> np.ndarray:
+        meta_controller_out = self.meta_controller.choose_action(state)
+        return meta_controller_out
 
     def learn(self, state: np.ndarray, action: int|float, reward: float, next_state: np.ndarray,
-              terminal: bool=False, next_state_possible_actions: List[int]|None=None) -> None:
-        return None
+              terminal: bool=False, next_state_possible_actions: List[int]|None=None):
+        self.training_steps += 1
+        self.current_skill_steps += 1
 
-    def learn_representation(
-            self,
-            state: np.ndarray,
-            action: int|float,
-            reward: float,
-            next_state: np.ndarray,
-            terminal: bool=False,
-            next_state_possible_actions: List[int]|None=None
-    ) -> None:
-        return
+        self.current_skill_reward += reward
 
-    def learn_skill(
-            self,
-            skill: int,
-            state: np.ndarray,
-            action: int | float,
-            reward: float,
-            next_state: np.ndarray,
-            terminal: bool = False,
-            next_state_possible_actions: List[int] | None = None
-    ) -> None:
+        if (self.current_skill_steps == self.skill_selection_frequency) or terminal:
+            self.meta_controller.learn(
+                self.current_skill_start_state,
+                self.current_skill,
+                self.current_skill_reward,
+                next_state,
+                terminal,
+            )
+
+            self.current_skill_steps = 0
+            self.current_skill_reward = 0
+            self.current_skill = None
+
         return
 
     @staticmethod
     def load(environment: gym.Env, load_path: Path) -> 'Agent':
-        with load_path.open('r') as f:
-            agent_data = json.load(f)
-        return Agent(agent_data['actions'])
+        orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
+        raw_load = orbax_checkpointer.restore(load_path.resolve())
+
+        agent = DIAYN.load_from_agent_dict(environment, raw_load)
+        return agent
+
+    @staticmethod
+    def load_from_agent_dict(
+            environment: gym.Env,
+            agent_dictionary: Dict[
+                str, np.ndarray | int | float | List[int] | Dict[str, np.ndarray | int | float | List[int]]]
+    ) -> 'DIAYN':
+        agent = DIAYN(
+            environment,
+            agent_dictionary['agent_details']['continuous_actions'],
+            agent_dictionary['agent_details']['meta_controller_shape'],
+            agent_dictionary['agent_details']['policy_shape'],
+            agent_dictionary['agent_details']['discriminator_shape'],
+            agent_dictionary['agent_details']['buffer_size'],
+            agent_dictionary['agent_details']['reward_scale'],
+            agent_dictionary['agent_details']['learning_rate'],
+            agent_dictionary['agent_details']['tau'],
+            agent_dictionary['agent_details']['minibatch_size'],
+            agent_dictionary['agent_details']['skill_selection_frequency'],
+            agent_dictionary['agent_details']['pre_learning_steps'],
+            agent_dictionary['agent_details']['pre_learning_steps'],
+            agent_dictionary['agent_details']['target_network_update_freq'],
+            agent_dictionary['agent_details']['discrete_skills'],
+            agent_dictionary['agent_details']['num_skills'],
+            agent_dictionary['agent_details']['output_loss_frequency'],
+        )
+
+        agent.action_policy = SAC.load_from_agent_dict(
+            environment,
+            agent_dictionary['action_policy']
+        )
+        agent.meta_controller = SAC.load_from_agent_dict(
+            environment,
+            agent_dictionary['meta_controller']
+        )
+
+        agent.discriminator = agent.discriminator.replace(
+            params=agent_dictionary['discriminator']['params'],
+            target_params=agent_dictionary['discriminator']['target_params'],
+        )
+
+        return agent
 
     def sample_skill(
             self
@@ -222,8 +303,12 @@ class DIAYN(VariationalAgent):
         return skill
 
     def save(self, save_path: Path) -> None:
-        with save_path.open('w') as f:
-            json.dump({'actions': self.actions}, f)
+
+        ckpt = self.agent_dict()
+
+        orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
+        save_args = orbax_utils.save_args_from_target(ckpt)
+        orbax_checkpointer.save(save_path.resolve(), ckpt, save_args=save_args)
         return
 
     def train_skills(
@@ -286,7 +371,6 @@ class DIAYN(VariationalAgent):
             )
 
             # update discriminator with SGD
-
             current_steps += 1
 
             if (current_steps > self.pre_learning_steps) and (current_steps % self.learning_frequency == 0):

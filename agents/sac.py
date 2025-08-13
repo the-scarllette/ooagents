@@ -11,7 +11,7 @@ import orbax
 from pathlib import Path
 from jax import Array
 from stable_baselines3.common.buffers import ReplayBuffer
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 from agents.agent import Agent
 
@@ -107,6 +107,8 @@ class SAC(Agent):
             target_network_update_freq: int=500,
             state_shape: None|Tuple[int, ...]=None,
             observation_sample: None|jnp.ndarray|np.ndarray=None,
+            action_shape: None|Tuple[int, ...]=None,
+            action_sample: None|jnp.ndarray|np.ndarray=None
     ):
         self.network_shape: None|List[int] = network_shape
         if network_shape is None:
@@ -132,7 +134,9 @@ class SAC(Agent):
         self.q_network_1: SoftQNetwork|QNetwork
         self.q_network_2: SoftQNetwork|QNetwork
         if self.continuous_actions:
-            self.action_shape = environment.action_space.shape
+            self.action_shape: Tuple[int, ...] = environment.action_space.shape
+            if action_shape is not None:
+                self.action_shape = action_shape
             self.policy_network = PolicyNetwork(
                 action_dim=self.action_shape[0],
                 shape=self.network_shape
@@ -144,7 +148,9 @@ class SAC(Agent):
                 shape=self.network_shape
             )
         else:
-            self.action_shape = (environment.action_space.n,)
+            self.action_shape: Tuple[int, ...] = (environment.action_space.n,)
+            if action_shape is not None:
+                self.action_shape = action_shape
             self.policy_network = QNetwork(
                 action_dim=self.action_shape[0],
                 shape=self.network_shape
@@ -163,52 +169,55 @@ class SAC(Agent):
         )
 
         start_key = jax.random.PRNGKey(0)
-        obs, _ = environment.reset()
+        self.observation_sample, _ = environment.reset()
         if observation_sample is not None:
-            obs = observation_sample
+            self.observation_sample = observation_sample
         self.policy: TrainState = TrainState.create(
             apply_fn=self.policy_network.apply,
-            params=self.policy_network.init(start_key, obs),
-            target_params=self.policy_network.init(start_key, obs),
+            params=self.policy_network.init(start_key, self.observation_sample),
+            target_params=self.policy_network.init(start_key, self.observation_sample),
             tx=optax.adam(learning_rate=self.learning_rate)
         )
         self.policy_network.apply = jax.jit(self.policy_network.apply)
 
+        self.action_sample: jnp.ndarray = action_sample
+        if self.action_sample is None:
+            self.action_sample: None | jnp.array = jnp.array([environment.action_space.sample()])
         if self.continuous_actions:
             self.q_1: TrainState = TrainState.create(
                 apply_fn=self.q_network_1.apply,
-                params=self.q_network_1.init(start_key, jnp.array([obs]), jnp.array([environment.action_space.sample()])),
-                target_params=self.q_network_1.init(start_key, jnp.array([obs]), jnp.array([environment.action_space.sample()])),
+                params=self.q_network_1.init(start_key, jnp.array([self.observation_sample]), self.action_sample),
+                target_params=self.q_network_1.init(start_key, jnp.array([self.observation_sample]), self.action_sample),
                 tx=optax.adam(learning_rate=self.learning_rate)
             )
             self.q_network_1.apply = jax.jit(self.q_network_1.apply)
             self.q_2: TrainState = TrainState.create(
                 apply_fn=self.q_network_2.apply,
-                params=self.q_network_2.init(start_key, jnp.array([obs]), jnp.array([environment.action_space.sample()])),
-                target_params=self.q_network_2.init(start_key, jnp.array([obs]), jnp.array([environment.action_space.sample()])),
+                params=self.q_network_2.init(start_key, jnp.array([self.observation_sample]), self.action_sample),
+                target_params=self.q_network_2.init(start_key, jnp.array([self.observation_sample]), self.action_sample),
                 tx=optax.adam(learning_rate=self.learning_rate)
             )
             self.q_network_2.apply = jax.jit(self.q_network_2.apply)
         else:
             self.q_1: TrainState = TrainState.create(
                 apply_fn=self.q_network_1.apply,
-                params=self.q_network_1.init(start_key, obs),
-                target_params=self.q_network_1.init(start_key, obs),
+                params=self.q_network_1.init(start_key, self.observation_sample),
+                target_params=self.q_network_1.init(start_key, self.observation_sample),
                 tx=optax.adam(learning_rate=self.learning_rate)
             )
             self.q_network_1.apply = jax.jit(self.q_network_1.apply)
             self.q_2: TrainState = TrainState.create(
                 apply_fn=self.q_network_2.apply,
-                params=self.q_network_2.init(start_key, obs),
-                target_params=self.q_network_2.init(start_key, obs),
+                params=self.q_network_2.init(start_key, self.observation_sample),
+                target_params=self.q_network_2.init(start_key, self.observation_sample),
                 tx=optax.adam(learning_rate=self.learning_rate)
             )
             self.q_network_2.apply = jax.jit(self.q_network_2.apply)
 
         self.value: TrainState = TrainState.create(
             apply_fn=self.value_network.apply,
-            params=self.value_network.init(start_key, obs),
-            target_params=self.value_network.init(start_key, obs),
+            params=self.value_network.init(start_key, self.observation_sample),
+            target_params=self.value_network.init(start_key, self.observation_sample),
             tx=optax.adam(learning_rate=self.learning_rate)
         )
         self.value_network.apply = jax.jit(self.value_network.apply)
@@ -223,6 +232,46 @@ class SAC(Agent):
 
         self.training_steps: int = 0
         return
+
+    def agent_dict(self) -> Dict[str, np.ndarray|int|float|List[int]|Dict[str, np.ndarray|int|float|List[int]]]:
+        agent_dictionary = {
+            'policy': {
+                'params': self.policy.params,
+                'target_params': self.policy.target_params,
+            },
+            'q_1': {
+                'params': self.q_1.params,
+                'target_params': self.q_1.target_params,
+            },
+            'q_2': {
+                'params': self.q_2.params,
+                'target_params': self.q_2.target_params,
+            },
+            'value': {
+                'params': self.value.params,
+                'target_params': self.value.target_params,
+            },
+            'agent_details':
+                {
+                    'continuous_actions': self.continuous_actions,
+                    'network_shape': self.network_shape,
+                    'buffer_size': self.buffer_size,
+                    'reward_scale': self.reward_scale,
+                    'learning_rate': self.learning_rate,
+                    'gamma': self.gamma,
+                    'tau': self.tau,
+                    'minibatch_size': self.minibatch_size,
+                    'pre_learning_steps': self.pre_learning_steps,
+                    'learning_frequency': self.learning_frequency,
+                    'target_network_update_freq': self.target_network_update_freq,
+                    'output_loss_freq': self.output_loss_freq,
+                    'state_shape': self.state_shape,
+                    'observation_sample': self.observation_sample,
+                    'action_shape': self.action_shape,
+                    'action_sample': self.action_sample
+                }
+        }
+        return agent_dictionary
 
     def choose_action(
             self,
@@ -476,35 +525,49 @@ class SAC(Agent):
         orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
         raw_load = orbax_checkpointer.restore(load_path.resolve())
 
+        agent = SAC.load_from_agent_dict(environment, raw_load)
+        return agent
+
+    @staticmethod
+    def load_from_agent_dict(
+            environment: gym.Env,
+            agent_dictionary: Dict[str, np.ndarray|int|float|List[int]|Dict[str, np.ndarray|int|float|List[int]]]
+    ) -> 'SAC':
         agent = SAC(
             environment,
-            raw_load['agent_details']['continuous_actions'],
-            raw_load['agent_details']['network_shape'],
-            raw_load['agent_details']['buffer_size'],
-            raw_load['agent_details']['reward_scale'],
-            raw_load['agent_details']['learning_rate'],
-            raw_load['agent_details']['gamma'],
-            raw_load['agent_details']['minibatch_size'],
-            raw_load['agent_details']['pre_learning_steps'],
-            raw_load['agent_details']['learning_frequency'],
-            raw_load['agent_details']['output_loss_freq'],
+            agent_dictionary['agent_details']['continuous_actions'],
+            agent_dictionary['agent_details']['network_shape'],
+            agent_dictionary['agent_details']['buffer_size'],
+            agent_dictionary['agent_details']['reward_scale'],
+            agent_dictionary['agent_details']['learning_rate'],
+            agent_dictionary['agent_details']['gamma'],
+            agent_dictionary['agent_details']['tau'],
+            agent_dictionary['agent_details']['minibatch_size'],
+            agent_dictionary['agent_details']['pre_learning_steps'],
+            agent_dictionary['agent_details']['learning_frequency'],
+            agent_dictionary['agent_details']['output_loss_freq'],
+            agent_dictionary['agent_details']['target_network_update_freq'],
+            agent_dictionary['agent_details']['state_shape'],
+            agent_dictionary['agent_details']['observation_sample'],
+            agent_dictionary['agent_details']['action_shape'],
+            agent_dictionary['agent_details']['action_sample']
         )
 
         agent.policy = agent.policy.replace(
-            params=raw_load['policy']['params'],
-            target_params=raw_load['policy']['target_params'],
+            params=agent_dictionary['policy']['params'],
+            target_params=agent_dictionary['policy']['target_params'],
         )
         agent.q_1 = agent.q_1.replace(
-            params=raw_load['q_1']['params'],
-            target_params=raw_load['q_1']['target_params'],
+            params=agent_dictionary['q_1']['params'],
+            target_params=agent_dictionary['q_1']['target_params'],
         )
         agent.q_2 = agent.q_2.replace(
-            params=raw_load['q_2']['params'],
-            target_params=raw_load['q_2']['target_params'],
+            params=agent_dictionary['q_2']['params'],
+            target_params=agent_dictionary['q_2']['target_params'],
         )
-        agent.value = agent.value_replace(
-            params=raw_load['value']['params'],
-            target_params=raw_load['value']['target_params'],
+        agent.value = agent.value.replace(
+            params=agent_dictionary['value']['params'],
+            target_params=agent_dictionary['value']['target_params'],
         )
 
         return agent
@@ -533,37 +596,7 @@ class SAC(Agent):
         return action, log_prob
 
     def save(self, save_path: Path) -> None:
-        ckpt = {
-            'policy': {
-                'params': self.policy.params,
-                'target_params': self.policy.target_params,
-            },
-            'q_1': {
-                'params': self.q_1.params,
-                'target_params': self.q_1.target_params,
-            },
-            'q_2': {
-                'params': self.q_2.params,
-                'target_params': self.q_2.target_params,
-            },
-            'value': {
-                'params': self.value.params,
-                'target_params': self.value.target_params,
-            },
-            'agent_details':
-                {
-                    'continuous_actions': self.continuous_actions,
-                    'network_shape': self.network_shape,
-                    'buffer_size': self.buffer_size,
-                    'reward_scale': self.reward_scale,
-                    'learning_rate': self.learning_rate,
-                    'gamma': self.gamma,
-                    'minibatch_size': self.minibatch_size,
-                    'pre_learning_steps': self.pre_learning_steps,
-                    'learning_frequency': self.learning_frequency,
-                    'output_loss_freq': self.output_loss_freq
-                }
-        }
+        ckpt = self.agent_dict()
 
         orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
         save_args = orbax_utils.save_args_from_target(ckpt)
