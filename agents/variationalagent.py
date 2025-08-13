@@ -1,3 +1,4 @@
+import gymnasium as gym
 import numpy as np
 from typing import List, Tuple
 
@@ -34,4 +35,11 @@ class VariationalAgent(Agent):
             terminal: bool = False,
             next_state_possible_actions: List[int] | None = None
     ) -> None:
+        return
+
+    def train_skills(
+            self,
+            environment: gym.Env,
+            training_steps: int
+    ):
         return
