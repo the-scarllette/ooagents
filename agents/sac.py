@@ -108,7 +108,9 @@ class SAC(Agent):
             state_shape: None|Tuple[int, ...]=None,
             observation_sample: None|jnp.ndarray|np.ndarray=None,
             action_shape: None|Tuple[int, ...]=None,
-            action_sample: None|jnp.ndarray|np.ndarray=None
+            action_sample: None|jnp.ndarray|np.ndarray=None,
+            observation_space: None|gym.spaces.Space=None,
+            action_space: None|gym.spaces.Space=None
     ):
         self.network_shape: None|List[int] = network_shape
         if network_shape is None:
@@ -148,9 +150,11 @@ class SAC(Agent):
                 shape=self.network_shape
             )
         else:
-            self.action_shape: Tuple[int, ...] = (environment.action_space.n,)
+            self.action_shape: Tuple[int, ...]
             if action_shape is not None:
                 self.action_shape = action_shape
+            else:
+                self.action_shape: Tuple[int, ...] = (environment.action_space.n,)
             self.policy_network = QNetwork(
                 action_dim=self.action_shape[0],
                 shape=self.network_shape
@@ -222,10 +226,17 @@ class SAC(Agent):
         )
         self.value_network.apply = jax.jit(self.value_network.apply)
 
+        self.observation_space: gym.spaces.Space = environment.observation_space
+        if observation_space is not None:
+            self.observation_space = observation_space
+        self.action_space: gym.spaces.Space = environment.action_space
+        if action_space is not None:
+            self.action_space = action_space
+
         self.replay_buffer: ReplayBuffer = ReplayBuffer(
             buffer_size,
-            environment.observation_space,
-            environment.action_space,
+            self.observation_space,
+            self.action_space,
             "cpu",
             handle_timeout_termination=False
         )
@@ -268,7 +279,9 @@ class SAC(Agent):
                     'state_shape': self.state_shape,
                     'observation_sample': self.observation_sample,
                     'action_shape': self.action_shape,
-                    'action_sample': self.action_sample
+                    'action_sample': self.action_sample,
+                    'observation_space': self.observation_space,
+                    'action_space': self.action_space
                 }
         }
         return agent_dictionary
@@ -483,7 +496,7 @@ class SAC(Agent):
         self.replay_buffer.add(
             state,
             next_state,
-            np.array([action]),
+            np.array(action),
             np.array([reward]),
             np.array([done]),
             None
@@ -550,7 +563,9 @@ class SAC(Agent):
             agent_dictionary['agent_details']['state_shape'],
             agent_dictionary['agent_details']['observation_sample'],
             agent_dictionary['agent_details']['action_shape'],
-            agent_dictionary['agent_details']['action_sample']
+            agent_dictionary['agent_details']['action_sample'],
+            agent_dictionary['agent_details']['observation_space'],
+            agent_dictionary['agent_details']['action_space']
         )
 
         agent.policy = agent.policy.replace(

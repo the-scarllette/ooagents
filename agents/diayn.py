@@ -99,19 +99,23 @@ class DIAYN(VariationalAgent):
         start_key = jax.random.PRNGKey(0)
         obs, _ = environment.reset()
 
-        sample_skill = jnp.zeros(self.num_skills)
+        sample_skill = np.zeros(self.num_skills)
         self.discriminator: TrainState = TrainState.create(
             apply_fn=self.discriminator_network.apply,
             params=self.discriminator_network.init(start_key, obs),
             target_params=self.discriminator_network.init(start_key, obs),
             tx=optax.adam(learning_rate=self.learning_rate)
         )
-        self.discriminator.apply = jax.jit(self.discriminator_network.apply)
+        self.discriminator_network.apply = jax.jit(self.discriminator_network.apply)
+
+        skill_space = gym.spaces.MultiBinary(sample_skill.shape[0])
+        if not self.discrete_skills:
+            skill_space = gym.spaces.Box(low=0, high=1, shape=sample_skill.shape)
 
         self.discriminator_replay_buffer: ReplayBuffer = ReplayBuffer(
             self.buffer_size,
             environment.observation_space,
-            gym.spaces.Space(sample_skill.shape, float),
+            skill_space,
             "cpu",
             handle_timeout_termination=False
         )
@@ -119,12 +123,14 @@ class DIAYN(VariationalAgent):
         self.policy_replay_buffer: ReplayBuffer = ReplayBuffer(
             self.buffer_size,
             environment.observation_space,
-            gym.spaces.Space(sample_skill.shape, float),
+            skill_space,
             "cpu",
             handle_timeout_termination=False
         )
 
-        state_skill_sample = jnp.concatenate([[obs], [sample_skill]], axis=-1)
+        state_skill_sample = jnp.concatenate([obs, sample_skill], axis=-1)
+        # TODO: Make state skill space
+        state_skill_space = gym.spaces.Box()
         self.action_policy: SAC = SAC(
             environment,
             continuous_actions,
@@ -293,13 +299,13 @@ class DIAYN(VariationalAgent):
     def sample_skill(
             self
     ) -> jnp.ndarray:
-        skill = jnp.zeros(self.num_skills)
         if self.discrete_skills:
+            skill = jnp.zeros(self.num_skills)
             skill_index = random.randint(0, self.num_skills - 1)
-            skill[skill_index] = 1
+            skill = skill.at[skill_index].set(1)
             return skill
 
-        skill[0] = random.uniform(0, 1)
+        skill = jnp.array([random.uniform(0, 1)])
         return skill
 
     def save(self, save_path: Path) -> None:
@@ -350,15 +356,17 @@ class DIAYN(VariationalAgent):
                 training_skill = self.sample_skill()
                 training_skill_index = np.where(training_skill == 1)[0]
 
-            action = self.action_policy.choose_action(jnp.concatenate([[state], [training_skill]], axis=-1))
+            state_skill = jnp.concatenate([state, training_skill], axis=-1)
+            action = self.action_policy.choose_action(state_skill)
             next_state, _, done, truncated, _ = environment.step(action)
+            next_state_skill = jnp.concatenate([next_state, training_skill], axis=-1)
 
-            p_z_array = self.discriminator_network.apply(next_state)
+            p_z_array = self.discriminator_network.apply(self.discriminator.params, next_state)
             approx_skill_prob = p_z_array[training_skill_index]
 
             skill_reward = jnp.log(approx_skill_prob) - log_skill_prob
 
-            self.action_policy.learn(state, action, skill_reward[0], next_state, done)
+            self.action_policy.learn(state_skill, action, skill_reward[0], next_state_skill, done)
 
             # add transition to replay buffer
             self.discriminator_replay_buffer.add(
@@ -379,6 +387,9 @@ class DIAYN(VariationalAgent):
                     transitions.next_observations.numpy(), # Next states
                     transitions.actions.numpy() # Skills
                 )
+
+                if current_steps % self.output_loss_frequency:
+                    print("Discriminator Loss: " + str(jax.device_get(discriminator_loss)))
 
             if current_steps % self.target_network_update_freq == 0:
                 self.discriminator = self.discriminator.replace(
